@@ -77,6 +77,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.change_button = wx.Button(panel, label="Change to selected workspace")
         self.create_button = wx.Button(panel, label="Create new workspace")
         self.rename_button = wx.Button(panel, label="Rename workspace")
+        self.snapshot_button = wx.Button(panel, label="Create workspace snapshot")
         self.push_button = wx.Button(panel, label="Push workspaces to GitHub")
         self.pull_button = wx.Button(panel, label="Pull workspaces from GitHub")
         self.edit_config_button = wx.Button(panel, label="Edit config")
@@ -85,6 +86,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.change_button.Bind(wx.EVT_BUTTON, self.on_change_workspace)
         self.create_button.Bind(wx.EVT_BUTTON, self.on_create_workspace)
         self.rename_button.Bind(wx.EVT_BUTTON, self.on_rename_workspace)
+        self.snapshot_button.Bind(wx.EVT_BUTTON, self.on_snapshot_workspace)
         self.push_button.Bind(wx.EVT_BUTTON, self.on_push_workspaces)
         self.pull_button.Bind(wx.EVT_BUTTON, self.on_pull_workspaces)
         self.edit_config_button.Bind(wx.EVT_BUTTON, self.on_edit_config)
@@ -93,6 +95,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         actions_sizer.Add(self.change_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.create_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.rename_button, 0, wx.EXPAND | wx.ALL, 6)
+        actions_sizer.Add(self.snapshot_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.push_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.pull_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.edit_config_button, 0, wx.EXPAND | wx.ALL, 6)
@@ -212,6 +215,19 @@ class JanWorkspaceManagerFrame(wx.Frame):
         if name:
             self.rename_workspace(selected, name)
 
+    def on_snapshot_workspace(self, event):
+        confirm_dialog = wx.MessageDialog(
+            self,
+            "Create a snapshot of the current workspace? This will copy assistants and threads into the selected workspace.",
+            "Create snapshot",
+            style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+        )
+        confirmed = confirm_dialog.ShowModal() == wx.ID_YES
+        confirm_dialog.Destroy()
+        if not confirmed:
+            return
+        self.snapshot_current_workspace()
+
     def on_push_workspaces(self, event):
         self.push_workspaces()
 
@@ -308,6 +324,69 @@ class JanWorkspaceManagerFrame(wx.Frame):
             self.selected_workspace = name
             self.save_appconfig()
         self.populate_workspaces()
+
+    def snapshot_current_workspace(self):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return
+        selected_name = getattr(self, "selected_workspace", "")
+        if not selected_name:
+            return
+        workspace_dir = self.get_workspace_dir_by_name(selected_name)
+        if not workspace_dir:
+            return
+        for folder_name in ("threads", "assistants"):
+            source = os.path.join(data_path, folder_name)
+            destination = os.path.join(workspace_dir, folder_name)
+            if not os.path.isdir(source):
+                continue
+            if os.path.exists(destination):
+                try:
+                    shutil.rmtree(destination)
+                except OSError:
+                    continue
+            shutil.copytree(source, destination)
+        self.update_workspace_modified_at(workspace_dir)
+        self.populate_workspaces()
+
+    def get_workspace_dir_by_name(self, name):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return ""
+        workspaces_dir = os.path.join(data_path, "workspaces")
+        if not os.path.isdir(workspaces_dir):
+            return ""
+        for entry in os.listdir(workspaces_dir):
+            entry_path = os.path.join(workspaces_dir, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            definition_path = os.path.join(entry_path, "ws_definition.json")
+            if not os.path.isfile(definition_path):
+                continue
+            try:
+                with open(definition_path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if data.get("name") == name:
+                return entry_path
+        return ""
+
+    def update_workspace_modified_at(self, workspace_dir):
+        definition_path = os.path.join(workspace_dir, "ws_definition.json")
+        if not os.path.isfile(definition_path):
+            return
+        try:
+            with open(definition_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return
+        data["modified_at"] = datetime.now().isoformat()
+        try:
+            with open(definition_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2)
+        except OSError:
+            return
 
     def rename_workspace(self, workspace, new_name):
         pass
