@@ -431,7 +431,58 @@ class JanWorkspaceManagerFrame(wx.Frame):
             return
 
     def rename_workspace(self, workspace, new_name):
-        pass
+        if not workspace:
+            return
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return
+        old_name = workspace.get("name") or ""
+        if not old_name:
+            return
+        if not new_name:
+            return
+        if new_name == old_name:
+            return
+        if self.get_workspace_dir_by_name(new_name):
+            dialog = wx.MessageDialog(
+                self,
+                f"A workspace named '{new_name}' already exists.",
+                "Rename workspace",
+                style=wx.OK | wx.ICON_WARNING,
+            )
+            dialog.ShowModal()
+            dialog.Destroy()
+            return
+        workspace_dir = self.get_workspace_dir_by_name(old_name)
+        if not workspace_dir:
+            return
+        definition_path = os.path.join(workspace_dir, "ws_definition.json")
+        if not os.path.isfile(definition_path):
+            return
+        try:
+            with open(definition_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return
+        data["name"] = new_name
+        data["modified_at"] = datetime.now().isoformat()
+        try:
+            with open(definition_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2)
+        except OSError:
+            return
+        if getattr(self, "selected_workspace", "") == old_name:
+            self.selected_workspace = new_name
+            self.save_appconfig()
+        self.populate_workspaces()
+        dialog = wx.MessageDialog(
+            self,
+            f"Workspace '{old_name}' renamed to '{new_name}'.",
+            "Rename workspace",
+            style=wx.OK | wx.ICON_INFORMATION,
+        )
+        dialog.ShowModal()
+        dialog.Destroy()
 
     def push_workspaces(self):
         pass
