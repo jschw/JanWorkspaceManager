@@ -60,6 +60,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         actions_sizer = wx.StaticBoxSizer(actions_box, wx.VERTICAL)
         self.change_button = wx.Button(panel, label="Change to selected workspace")
         self.create_button = wx.Button(panel, label="Create new workspace")
+        self.rename_button = wx.Button(panel, label="Rename workspace")
         self.push_button = wx.Button(panel, label="Push workspaces to GitHub")
         self.pull_button = wx.Button(panel, label="Pull workspaces from GitHub")
         self.edit_config_button = wx.Button(panel, label="Edit config")
@@ -67,6 +68,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
 
         self.change_button.Bind(wx.EVT_BUTTON, self.on_change_workspace)
         self.create_button.Bind(wx.EVT_BUTTON, self.on_create_workspace)
+        self.rename_button.Bind(wx.EVT_BUTTON, self.on_rename_workspace)
         self.push_button.Bind(wx.EVT_BUTTON, self.on_push_workspaces)
         self.pull_button.Bind(wx.EVT_BUTTON, self.on_pull_workspaces)
         self.edit_config_button.Bind(wx.EVT_BUTTON, self.on_edit_config)
@@ -74,6 +76,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
 
         actions_sizer.Add(self.change_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.create_button, 0, wx.EXPAND | wx.ALL, 6)
+        actions_sizer.Add(self.rename_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.push_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.pull_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.edit_config_button, 0, wx.EXPAND | wx.ALL, 6)
@@ -136,6 +139,14 @@ class JanWorkspaceManagerFrame(wx.Frame):
         if name:
             self.dummy_create_workspace(name)
 
+    def on_rename_workspace(self, event):
+        selected = self.get_selected_workspace()
+        if not selected:
+            return
+        name = self.prompt_for_workspace_name(prompt="Enter new workspace name:")
+        if name:
+            self.dummy_rename_workspace(selected, name)
+
     def on_push_workspaces(self, event):
         self.dummy_push_workspaces()
 
@@ -155,8 +166,8 @@ class JanWorkspaceManagerFrame(wx.Frame):
         name = self.workspaces_list.GetItemText(index)
         return {"name": name}
 
-    def prompt_for_workspace_name(self):
-        dialog = wx.TextEntryDialog(self, "Enter new workspace name:", "Create Workspace")
+    def prompt_for_workspace_name(self, prompt="Enter new workspace name:", title="Workspace"):
+        dialog = wx.TextEntryDialog(self, prompt, title)
         if dialog.ShowModal() == wx.ID_OK:
             name = dialog.GetValue().strip()
         else:
@@ -174,6 +185,9 @@ class JanWorkspaceManagerFrame(wx.Frame):
         pass
 
     def dummy_create_workspace(self, name):
+        pass
+
+    def dummy_rename_workspace(self, workspace, new_name):
         pass
 
     def dummy_push_workspaces(self):
