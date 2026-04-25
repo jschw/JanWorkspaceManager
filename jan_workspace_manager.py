@@ -59,9 +59,14 @@ class JanWorkspaceManagerFrame(wx.Frame):
             panel,
             style=wx.LC_REPORT | wx.BORDER_SUNKEN | wx.LC_SINGLE_SEL,
         )
-        self.workspaces_list.InsertColumn(0, "Workspace", width=300)
-        self.workspaces_list.InsertColumn(1, "Created", width=220)
-        self.workspaces_list.InsertColumn(2, "Last modified", width=220)
+        current_column = wx.ListItem()
+        current_column.SetText("Current")
+        current_column.SetAlign(wx.LIST_FORMAT_CENTER)
+        current_column.SetWidth(60)
+        self.workspaces_list.InsertColumn(0, current_column)
+        self.workspaces_list.InsertColumn(1, "Workspace", width=260)
+        self.workspaces_list.InsertColumn(2, "Created", width=160)
+        self.workspaces_list.InsertColumn(3, "Last modified", width=160)
         workspaces_sizer.Add(self.workspaces_list, 1, wx.EXPAND | wx.ALL, 12)
 
         notes_box = wx.StaticBox(panel, label="Workspace notes")
@@ -125,6 +130,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
             return
         workspaces_dir = os.path.join(data_path, "workspaces")
         os.makedirs(workspaces_dir, exist_ok=True)
+        selected_name = getattr(self, "selected_workspace", "")
         for entry in sorted(os.listdir(workspaces_dir)):
             entry_path = os.path.join(workspaces_dir, entry)
             if not os.path.isdir(entry_path):
@@ -138,11 +144,13 @@ class JanWorkspaceManagerFrame(wx.Frame):
             except (OSError, json.JSONDecodeError):
                 continue
             name = data.get("name", entry)
-            created_at = data.get("created_at", "")
-            modified_at = data.get("modified_at", "")
-            index = self.workspaces_list.InsertItem(self.workspaces_list.GetItemCount(), name)
-            self.workspaces_list.SetItem(index, 1, created_at)
-            self.workspaces_list.SetItem(index, 2, modified_at)
+            created_at = self.format_timestamp(data.get("created_at", ""))
+            modified_at = self.format_timestamp(data.get("modified_at", ""))
+            current_marker = "x" if name == selected_name else ""
+            index = self.workspaces_list.InsertItem(self.workspaces_list.GetItemCount(), current_marker)
+            self.workspaces_list.SetItem(index, 1, name)
+            self.workspaces_list.SetItem(index, 2, created_at)
+            self.workspaces_list.SetItem(index, 3, modified_at)
 
     def on_data_path_changed(self, event):
         path = self.data_path_input.GetValue().strip()
@@ -230,7 +238,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         index = self.workspaces_list.GetFirstSelected()
         if index == -1:
             return None
-        name = self.workspaces_list.GetItemText(index)
+        name = self.workspaces_list.GetItemText(index, 1)
         return {"name": name}
 
     def prompt_for_workspace_name(self, prompt="Enter new workspace name:", title="Workspace"):
@@ -300,6 +308,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.restore_workspace_data(selected_workspace_dir)
         self.selected_workspace = selected_name
         self.save_appconfig()
+        self.populate_workspaces()
         success_dialog = wx.MessageDialog(
             self,
             f"Switched to workspace '{selected_name}'.",
@@ -429,6 +438,15 @@ class JanWorkspaceManagerFrame(wx.Frame):
                 json.dump(data, handle, indent=2)
         except OSError:
             return
+
+    def format_timestamp(self, value):
+        if not value:
+            return ""
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+        return parsed.strftime("%Y-%m-%d %H:%M")
 
     def rename_workspace(self, workspace, new_name):
         if not workspace:
