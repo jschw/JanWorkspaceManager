@@ -44,14 +44,11 @@ class JanWorkspaceManagerFrame(wx.Frame):
         data_path_sizer.Add(self.data_path_browse_button, 0, wx.TOP, 6)
         settings_grid.Add(data_path_sizer, 0, wx.EXPAND)
 
-        settings_grid.Add(wx.StaticText(panel, label="GitHub repo path"), 0)
+        settings_grid.Add(wx.StaticText(panel, label="GitHub repo URL"), 0)
         self.github_repo_input = wx.TextCtrl(panel)
-        self.github_repo_browse_button = wx.Button(panel, label="Browse")
         self.github_repo_input.Bind(wx.EVT_TEXT, self.on_github_repo_changed)
-        self.github_repo_browse_button.Bind(wx.EVT_BUTTON, self.on_browse_github_repo)
         github_path_sizer = wx.BoxSizer(wx.VERTICAL)
         github_path_sizer.Add(self.github_repo_input, 0, wx.EXPAND)
-        github_path_sizer.Add(self.github_repo_browse_button, 0, wx.TOP, 6)
         settings_grid.Add(github_path_sizer, 0, wx.EXPAND)
 
         settings_sizer.Add(settings_grid, 0, wx.EXPAND | wx.ALL, 12)
@@ -80,7 +77,6 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.snapshot_button = wx.Button(panel, label="Create workspace snapshot")
         self.push_button = wx.Button(panel, label="Push workspaces to GitHub")
         self.pull_button = wx.Button(panel, label="Pull workspaces from GitHub")
-        self.edit_config_button = wx.Button(panel, label="Edit config")
         self.quit_button = wx.Button(panel, label="Quit")
 
         self.change_button.Bind(wx.EVT_BUTTON, self.on_change_workspace)
@@ -89,7 +85,6 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.snapshot_button.Bind(wx.EVT_BUTTON, self.on_snapshot_workspace)
         self.push_button.Bind(wx.EVT_BUTTON, self.on_push_workspaces)
         self.pull_button.Bind(wx.EVT_BUTTON, self.on_pull_workspaces)
-        self.edit_config_button.Bind(wx.EVT_BUTTON, self.on_edit_config)
         self.quit_button.Bind(wx.EVT_BUTTON, self.on_quit)
 
         actions_sizer.Add(self.change_button, 0, wx.EXPAND | wx.ALL, 6)
@@ -98,7 +93,6 @@ class JanWorkspaceManagerFrame(wx.Frame):
         actions_sizer.Add(self.snapshot_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.push_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.pull_button, 0, wx.EXPAND | wx.ALL, 6)
-        actions_sizer.Add(self.edit_config_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.quit_button, 0, wx.EXPAND | wx.ALL, 6)
 
         left_column = wx.BoxSizer(wx.VERTICAL)
@@ -174,11 +168,6 @@ class JanWorkspaceManagerFrame(wx.Frame):
         repo_path = self.github_repo_input.GetValue().strip()
         self.set_github_repo_path(repo_path)
 
-    def on_browse_github_repo(self, event):
-        with wx.DirDialog(self, "Select GitHub repo path") as dialog:
-            if dialog.ShowModal() == wx.ID_OK:
-                self.github_repo_input.SetValue(dialog.GetPath())
-
     def on_create_workspace(self, event):
         if not getattr(self, "data_path", ""):
             return
@@ -234,9 +223,6 @@ class JanWorkspaceManagerFrame(wx.Frame):
     def on_pull_workspaces(self, event):
         self.pull_workspaces()
 
-    def on_edit_config(self, event):
-        self.edit_config()
-
     def on_quit(self, event):
         self.Close()
 
@@ -283,9 +269,45 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.save_appconfig()
 
     def change_workspace(self, workspace):
-        selected_name = workspace.get("name") if workspace else ""
+        if not workspace:
+            return
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return
+        selected_name = workspace.get("name") or ""
+        if not selected_name:
+            return
+        selected_workspace_dir = self.get_workspace_dir_by_name(selected_name)
+        if not selected_workspace_dir:
+            return
+
+        current_name = getattr(self, "selected_workspace", "")
+        if current_name:
+            current_dir = self.get_workspace_dir_by_name(current_name)
+            if current_dir:
+                confirm_dialog = wx.MessageDialog(
+                    self,
+                    "Create a snapshot of the current workspace before switching?",
+                    "Create snapshot",
+                    style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+                )
+                confirmed = confirm_dialog.ShowModal() == wx.ID_YES
+                confirm_dialog.Destroy()
+                if confirmed:
+                    self.snapshot_current_workspace()
+
+        self.clear_workspace_data()
+        self.restore_workspace_data(selected_workspace_dir)
         self.selected_workspace = selected_name
         self.save_appconfig()
+        success_dialog = wx.MessageDialog(
+            self,
+            f"Switched to workspace '{selected_name}'.",
+            "Workspace changed",
+            style=wx.OK | wx.ICON_INFORMATION,
+        )
+        success_dialog.ShowModal()
+        success_dialog.Destroy()
 
     def set_github_repo_path(self, repo_path):
         self.github_repo_path = repo_path
@@ -349,6 +371,26 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.update_workspace_modified_at(workspace_dir)
         self.populate_workspaces()
 
+    def restore_workspace_data(self, workspace_dir):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return
+        for folder_name in ("threads", "assistants"):
+            source = os.path.join(workspace_dir, folder_name)
+            destination = os.path.join(data_path, folder_name)
+            if os.path.isdir(source):
+                if os.path.exists(destination):
+                    try:
+                        shutil.rmtree(destination)
+                    except OSError:
+                        continue
+                try:
+                    shutil.copytree(source, destination)
+                except OSError:
+                    continue
+            else:
+                os.makedirs(destination, exist_ok=True)
+
     def get_workspace_dir_by_name(self, name):
         data_path = getattr(self, "data_path", "")
         if not data_path:
@@ -395,9 +437,6 @@ class JanWorkspaceManagerFrame(wx.Frame):
         pass
 
     def pull_workspaces(self):
-        pass
-
-    def edit_config(self):
         pass
 
     def clear_workspace_data(self):
