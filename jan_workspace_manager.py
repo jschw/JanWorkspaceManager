@@ -13,7 +13,7 @@ import wx
 
 class JanWorkspaceManagerFrame(wx.Frame):
     def __init__(self):
-        super().__init__(None, title="Jan Workspace Manager", size=(900, 620))
+        super().__init__(None, title="Jan Workspace Manager", size=(900, 650))
 
         # Define config paths
         config_dir = Path(appdirs.user_config_dir(appname="jan-wsmanager"))
@@ -91,7 +91,8 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.change_button = wx.Button(panel, label="Change to selected workspace")
         self.create_button = wx.Button(panel, label="Create new workspace")
         self.rename_button = wx.Button(panel, label="Rename workspace")
-        self.snapshot_button = wx.Button(panel, label="Create workspace snapshot")
+        self.snapshot_button = wx.Button(panel, label="Sync Jan -> WS Manager")
+        self.sync_local_changes_button = wx.Button(panel, label="Sync WS Manager -> Jan")
         self.push_button = wx.Button(panel, label="Push workspaces to GitHub")
         self.pull_button = wx.Button(panel, label="Pull workspaces from GitHub")
         self.quit_button = wx.Button(panel, label="Quit")
@@ -101,6 +102,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.appconfig_open_button.Bind(wx.EVT_BUTTON, self.on_open_appconfig)
         self.rename_button.Bind(wx.EVT_BUTTON, self.on_rename_workspace)
         self.snapshot_button.Bind(wx.EVT_BUTTON, self.on_snapshot_workspace)
+        self.sync_local_changes_button.Bind(wx.EVT_BUTTON, self.on_sync_local_changes)
         self.push_button.Bind(wx.EVT_BUTTON, self.on_push_workspaces)
         self.pull_button.Bind(wx.EVT_BUTTON, self.on_pull_workspaces)
         self.quit_button.Bind(wx.EVT_BUTTON, self.on_quit)
@@ -109,6 +111,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         actions_sizer.Add(self.create_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.rename_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.snapshot_button, 0, wx.EXPAND | wx.ALL, 6)
+        actions_sizer.Add(self.sync_local_changes_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.push_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.pull_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.appconfig_open_button, 0, wx.EXPAND | wx.ALL, 6)
@@ -265,6 +268,19 @@ class JanWorkspaceManagerFrame(wx.Frame):
         if not confirmed:
             return
         self.snapshot_current_workspace()
+
+    def on_sync_local_changes(self, event):
+        confirm_dialog = wx.MessageDialog(
+            self,
+            "Sync from the selected workspace into the local assistants and threads? This overwrites local changes.",
+            "Sync local changes",
+            style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+        )
+        confirmed = confirm_dialog.ShowModal() == wx.ID_YES
+        confirm_dialog.Destroy()
+        if not confirmed:
+            return
+        self.sync_local_changes_from_workspace()
 
     def on_push_workspaces(self, event):
         self.push_workspaces()
@@ -451,6 +467,18 @@ class JanWorkspaceManagerFrame(wx.Frame):
             shutil.copytree(source, destination)
         self.update_workspace_modified_at(workspace_dir)
         self.populate_workspaces()
+
+    def sync_local_changes_from_workspace(self):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return
+        selected_name = getattr(self, "selected_workspace", "")
+        if not selected_name:
+            return
+        workspace_dir = self.get_workspace_dir_by_name(selected_name)
+        if not workspace_dir:
+            return
+        self.restore_workspace_data(workspace_dir)
 
     def restore_workspace_data(self, workspace_dir):
         data_path = getattr(self, "data_path", "")
