@@ -6,6 +6,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 import appdirs
+from git import Repo, GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 
 import wx
 
@@ -133,6 +134,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
 
         self.load_appconfig()
         self.populate_workspaces()
+        self.prompt_pull_on_startup()
 
     def open_in_default_editor(self, file_path: Path):
         try:
@@ -151,7 +153,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         data_path = getattr(self, "data_path", "")
         if not data_path:
             return
-        workspaces_dir = os.path.join(data_path, "workspaces")
+        workspaces_dir = self.get_workspaces_root()
         os.makedirs(workspaces_dir, exist_ok=True)
         selected_name = getattr(self, "selected_workspace", "")
         for entry in sorted(os.listdir(workspaces_dir)):
@@ -187,7 +189,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
                     return
                 data_path = dialog.GetPath()
                 self.data_path_input.SetValue(data_path)
-        workspaces_dir = os.path.join(data_path, "workspaces")
+        workspaces_dir = self.get_workspaces_root()
         os.makedirs(workspaces_dir, exist_ok=True)
         wx.LaunchDefaultApplication(workspaces_dir)
 
@@ -312,7 +314,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         if not path:
             self.save_appconfig()
             return
-        workspaces_dir = os.path.join(path, "workspaces")
+        workspaces_dir = self.get_workspaces_root()
         os.makedirs(workspaces_dir, exist_ok=True)
         self.populate_workspaces()
         self.save_appconfig()
@@ -362,8 +364,24 @@ class JanWorkspaceManagerFrame(wx.Frame):
         success_dialog.Destroy()
 
     def set_github_repo_path(self, repo_path):
+        previous_path = getattr(self, "github_repo_path", "")
+        repo_path = repo_path.strip()
+        if repo_path == previous_path:
+            return
+
+        if not repo_path:
+            self.github_repo_path = ""
+            self.save_appconfig()
+            self.handle_repo_url_deleted(previous_path)
+            return
+
         self.github_repo_path = repo_path
         self.save_appconfig()
+
+        if not previous_path:
+            self.handle_repo_url_first_set(repo_path)
+        else:
+            self.handle_repo_url_changed(previous_path, repo_path)
 
     def create_workspace(self, name, copy_from_data=True, set_selected=True):
         if not name:
@@ -371,7 +389,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         data_path = getattr(self, "data_path", "")
         if not data_path:
             return
-        workspaces_dir = os.path.join(data_path, "workspaces")
+        workspaces_dir = self.get_workspaces_root()
         os.makedirs(workspaces_dir, exist_ok=True)
         workspace_id = str(uuid.uuid4())
         workspace_dir = os.path.join(workspaces_dir, workspace_id)
@@ -448,7 +466,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         data_path = getattr(self, "data_path", "")
         if not data_path:
             return ""
-        workspaces_dir = os.path.join(data_path, "workspaces")
+        workspaces_dir = self.get_workspaces_root()
         if not os.path.isdir(workspaces_dir):
             return ""
         for entry in os.listdir(workspaces_dir):
@@ -598,10 +616,308 @@ class JanWorkspaceManagerFrame(wx.Frame):
         dialog.Destroy()
 
     def push_workspaces(self):
-        pass
+        repo = self.get_git_repo()
+        if not repo:
+            self.show_info("Push workspaces", "No Git repository configured.")
+            return
+        if not self.github_repo_path:
+            self.show_info("Push workspaces", "No Git repository URL configured.")
+            return
+        busy = self.show_busy("Pushing workspaces...")
+        try:
+            if repo.is_dirty(untracked_files=True):
+                repo.git.add(A=True)
+                message = f"Workspace sync {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                repo.index.commit(message)
+            remote = self.ensure_git_remote(repo)
+            remote.push()
+            self.show_info("Push workspaces", "Workspaces pushed to Git.")
+        except GitCommandError as exc:
+            self.show_error("Push workspaces", f"Failed to push workspaces: {exc}")
+        finally:
+            self.hide_busy(busy)
 
     def pull_workspaces(self):
-        pass
+        repo = self.get_git_repo()
+        if not repo:
+            self.show_info("Pull workspaces", "No Git repository configured.")
+            return
+        if not self.github_repo_path:
+            self.show_info("Pull workspaces", "No Git repository URL configured.")
+            return
+        busy = self.show_busy("Pulling workspaces...")
+        try:
+            remote = self.ensure_git_remote(repo)
+            remote.pull()
+            self.show_info("Pull workspaces", "Workspaces pulled from Git.")
+        except GitCommandError as exc:
+            self.show_error("Pull workspaces", f"Failed to pull workspaces: {exc}")
+        finally:
+            self.hide_busy(busy)
+
+    def prompt_pull_on_startup(self):
+        repo_path = getattr(self, "github_repo_path", "")
+        if not repo_path:
+            return
+        dialog = wx.MessageDialog(
+            self,
+            "A Git repository is configured. Pull workspaces now?",
+            "Pull workspaces",
+            style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+        )
+        should_pull = dialog.ShowModal() == wx.ID_YES
+        dialog.Destroy()
+        if should_pull:
+            self.pull_workspaces()
+
+    def get_git_repo(self):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return None
+        try:
+            repo_path = getattr(self, "github_repo_path", "")
+            if not repo_path:
+                return None
+            repo_dir = self.get_repo_dir(data_path, repo_path)
+            return Repo(repo_dir)
+        except (InvalidGitRepositoryError, NoSuchPathError):
+            return None
+
+    def ensure_git_remote(self, repo):
+        try:
+            remote = repo.remote(name="origin")
+            current_url = ""
+            try:
+                current_url = next(iter(remote.urls))
+            except StopIteration:
+                current_url = ""
+            if self.github_repo_path and current_url != self.github_repo_path:
+                remote.set_url(self.github_repo_path)
+            return remote
+        except ValueError:
+            if not self.github_repo_path:
+                raise GitCommandError("remote", "No Git URL configured")
+            return repo.create_remote("origin", self.github_repo_path)
+
+    def handle_repo_url_first_set(self, repo_path):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            self.show_error("Git setup", "Set a data path before configuring Git.")
+            self.github_repo_path = ""
+            self.github_repo_input.ChangeValue("")
+            self.save_appconfig()
+            return
+        if self.get_git_repo():
+            repo = self.get_git_repo()
+            try:
+                self.ensure_git_remote(repo)
+            except GitCommandError as exc:
+                self.show_error("Git setup", f"Failed to set remote: {exc}")
+            return
+        confirm = wx.MessageDialog(
+            self,
+            "Clone the repository and move the local workspace into it?",
+            "Clone repository",
+            style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+        )
+        should_clone = confirm.ShowModal() == wx.ID_YES
+        confirm.Destroy()
+        if not should_clone:
+            self.github_repo_path = ""
+            self.github_repo_input.ChangeValue("")
+            self.save_appconfig()
+            return
+        repo_dir = self.get_repo_dir(data_path, repo_path)
+        busy = self.show_busy("Cloning repository...")
+        try:
+            self.clone_repo_into_workspaces(repo_path, repo_dir, data_path)
+        except GitCommandError as exc:
+            self.show_error("Git setup", f"Failed to clone repository: {exc}")
+            return
+        finally:
+            self.hide_busy(busy)
+        self.show_info("Git setup", "Repository cloned into workspaces.")
+        self.populate_workspaces()
+        self.load_workspace_notes()
+
+    def handle_repo_url_changed(self, previous_path, repo_path):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return
+        repo_dir = self.get_repo_dir(data_path, repo_path)
+        busy = self.show_busy("Cloning repository...")
+        try:
+            self.replace_repo_in_workspaces(repo_path, repo_dir, data_path)
+        except GitCommandError as exc:
+            self.show_error("Git setup", f"Failed to clone repository: {exc}")
+            self.github_repo_path = previous_path
+            self.github_repo_input.ChangeValue(previous_path)
+            self.save_appconfig()
+            return
+        finally:
+            self.hide_busy(busy)
+        self.show_info("Git setup", "Repository changed in workspaces.")
+        self.populate_workspaces()
+        self.load_workspace_notes()
+
+    def handle_repo_url_deleted(self, previous_path):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return
+        if not self.get_git_repo():
+            return
+        repo_dir = self.get_repo_dir(data_path, previous_path)
+        self.move_repo_contents_to_workspaces_root(repo_dir, data_path)
+        self.show_info("Git setup", "Git URL removed. Using local workspaces.")
+        self.populate_workspaces()
+        self.load_workspace_notes()
+
+    def get_repo_dir(self, data_path, repo_path):
+        workspaces_root = Path(data_path) / "workspaces"
+        repo_name = self.repo_name_from_url(repo_path)
+        return workspaces_root / repo_name
+
+    def clone_repo_into_workspaces(self, repo_path, repo_dir, data_path):
+        repo_dir = Path(repo_dir)
+        os.makedirs(repo_dir.parent, exist_ok=True)
+        if not repo_dir.exists() or self.is_directory_empty(repo_dir):
+            Repo.clone_from(repo_path, repo_dir)
+        else:
+            temp_dir = self.create_temp_clone_dir(repo_dir)
+            Repo.clone_from(repo_path, temp_dir)
+            self.copy_entry_overwrite(temp_dir, repo_dir)
+            self.remove_entry(temp_dir)
+        self.move_workspace_root_into_repo(data_path, repo_dir)
+
+    def replace_repo_in_workspaces(self, repo_path, repo_dir, data_path):
+        repo_dir = Path(repo_dir)
+        os.makedirs(repo_dir.parent, exist_ok=True)
+        if not repo_dir.exists() or self.is_directory_empty(repo_dir):
+            Repo.clone_from(repo_path, repo_dir)
+        else:
+            temp_dir = self.create_temp_clone_dir(repo_dir)
+            Repo.clone_from(repo_path, temp_dir)
+            self.copy_entry_overwrite(temp_dir, repo_dir)
+            self.remove_entry(temp_dir)
+        self.move_workspace_root_into_repo(data_path, repo_dir)
+
+    def repo_name_from_url(self, repo_path):
+        cleaned = repo_path.rstrip("/")
+        name = cleaned.split("/")[-1]
+        if name.endswith(".git"):
+            name = name[:-4]
+        if not name:
+            name = "jan-workspaces-repo"
+        return name
+
+    def create_temp_clone_dir(self, repo_dir):
+        parent = repo_dir.parent
+        return parent / f".{repo_dir.name}-clone-{uuid.uuid4().hex}"
+
+    def move_workspace_root_into_repo(self, data_path, repo_dir):
+        workspaces_root = Path(data_path) / "workspaces"
+        if not workspaces_root.exists():
+            return
+        for entry in workspaces_root.iterdir():
+            if entry == repo_dir:
+                continue
+            dest = repo_dir / entry.name
+            self.copy_entry_overwrite(entry, dest)
+            self.remove_entry(entry)
+
+    def move_repo_contents_to_workspaces_root(self, repo_dir, data_path):
+        repo_dir = Path(repo_dir)
+        if not repo_dir.exists():
+            return
+        workspaces_root = Path(data_path) / "workspaces"
+        os.makedirs(workspaces_root, exist_ok=True)
+        for entry in repo_dir.iterdir():
+            if entry.name == ".git":
+                continue
+            dest = workspaces_root / entry.name
+            self.copy_entry_overwrite(entry, dest)
+        try:
+            shutil.rmtree(repo_dir)
+        except OSError:
+            pass
+
+    def copy_entry_overwrite(self, source, dest):
+        source = Path(source)
+        dest = Path(dest)
+        if source.is_dir():
+            if dest.exists() and dest.is_dir():
+                shutil.copytree(source, dest, dirs_exist_ok=True)
+            else:
+                if dest.exists():
+                    try:
+                        dest.unlink()
+                    except OSError:
+                        pass
+                shutil.copytree(source, dest)
+        else:
+            os.makedirs(dest.parent, exist_ok=True)
+            if dest.exists():
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+            try:
+                shutil.copy2(source, dest)
+            except OSError:
+                pass
+
+    def remove_entry(self, path):
+        path = Path(path)
+        if not path.exists():
+            return
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except OSError:
+            pass
+
+    def is_directory_empty(self, path):
+        try:
+            return not any(Path(path).iterdir())
+        except OSError:
+            return True
+
+    def get_workspaces_root(self):
+        data_path = getattr(self, "data_path", "")
+        if not data_path:
+            return ""
+        repo_path = getattr(self, "github_repo_path", "")
+        if repo_path:
+            return str(self.get_repo_dir(data_path, repo_path))
+        return os.path.join(data_path, "workspaces")
+
+    def show_info(self, title, message):
+        dialog = wx.MessageDialog(self, message, title, style=wx.OK | wx.ICON_INFORMATION)
+        dialog.ShowModal()
+        dialog.Destroy()
+
+    def show_error(self, title, message):
+        dialog = wx.MessageDialog(self, message, title, style=wx.OK | wx.ICON_ERROR)
+        dialog.ShowModal()
+        dialog.Destroy()
+
+    def show_busy(self, message):
+        try:
+            busy = wx.BusyInfo(message, parent=self)
+            wx.YieldIfNeeded()
+            return busy
+        except Exception:
+            return None
+
+    def hide_busy(self, busy):
+        if busy is None:
+            return
+        try:
+            busy.Destroy()
+        except Exception:
+            pass
 
     def clear_workspace_data(self):
         data_path = getattr(self, "data_path", "")
