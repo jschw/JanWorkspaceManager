@@ -68,12 +68,14 @@ class JanWorkspaceManagerFrame(wx.Frame):
             panel,
             style=wx.LC_REPORT | wx.BORDER_SUNKEN | wx.LC_SINGLE_SEL,
         )
+        self.workspaces_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_workspace_list_selection)
+        self.workspaces_list.Bind(wx.EVT_LIST_ITEM_DESELECTED, self.on_workspace_list_selection)
         current_column = wx.ListItem()
         current_column.SetText("Current")
         current_column.SetAlign(wx.LIST_FORMAT_CENTER)
         current_column.SetWidth(60)
         self.workspaces_list.InsertColumn(0, current_column)
-        self.workspaces_list.InsertColumn(1, "Workspace", width=260)
+        self.workspaces_list.InsertColumn(1, "Workspace", width=200)
         self.workspaces_list.InsertColumn(2, "Created", width=160)
         self.workspaces_list.InsertColumn(3, "Last modified", width=160)
         workspaces_sizer.Add(self.workspaces_list, 1, wx.EXPAND | wx.ALL, 12)
@@ -276,6 +278,14 @@ class JanWorkspaceManagerFrame(wx.Frame):
     def on_notes_changed(self, event):
         notes = self.notes_field.GetValue()
         self.save_workspace_notes(notes)
+
+    def on_workspace_list_selection(self, event):
+        selected = self.get_selected_workspace()
+        if selected and selected.get("name"):
+            self.load_workspace_notes(selected["name"])
+        else:
+            self.load_workspace_notes()
+        event.Skip()
 
     def get_selected_workspace(self):
         index = self.workspaces_list.GetFirstSelected()
@@ -501,8 +511,14 @@ class JanWorkspaceManagerFrame(wx.Frame):
         except OSError:
             return
 
-    def load_workspace_notes(self):
-        selected_name = getattr(self, "selected_workspace", "")
+    def get_notes_target_name(self):
+        selected = self.get_selected_workspace()
+        if selected and selected.get("name"):
+            return selected["name"]
+        return getattr(self, "selected_workspace", "")
+
+    def load_workspace_notes(self, workspace_name=None):
+        selected_name = workspace_name or self.get_notes_target_name()
         if not selected_name:
             self.notes_field.ChangeValue("")
             return
@@ -526,7 +542,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.notes_field.ChangeValue(notes)
 
     def save_workspace_notes(self, notes):
-        selected_name = getattr(self, "selected_workspace", "")
+        selected_name = self.get_notes_target_name()
         if not selected_name:
             return
         workspace_dir = self.get_workspace_dir_by_name(selected_name)
