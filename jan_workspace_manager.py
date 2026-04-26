@@ -80,6 +80,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         notes_box = wx.StaticBox(panel, label="Workspace notes")
         notes_sizer = wx.StaticBoxSizer(notes_box, wx.VERTICAL)
         self.notes_field = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_RICH2)
+        self.notes_field.Bind(wx.EVT_TEXT, self.on_notes_changed)
         notes_sizer.Add(self.notes_field, 1, wx.EXPAND | wx.ALL, 12)
 
         actions_box = wx.StaticBox(panel, label="Actions")
@@ -270,6 +271,10 @@ class JanWorkspaceManagerFrame(wx.Frame):
     def on_quit(self, event):
         self.Close()
 
+    def on_notes_changed(self, event):
+        notes = self.notes_field.GetValue()
+        self.save_workspace_notes(notes)
+
     def get_selected_workspace(self):
         index = self.workspaces_list.GetFirstSelected()
         if index == -1:
@@ -311,6 +316,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         os.makedirs(workspaces_dir, exist_ok=True)
         self.populate_workspaces()
         self.save_appconfig()
+        self.load_workspace_notes()
 
     def change_workspace(self, workspace):
         if not workspace:
@@ -345,6 +351,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.selected_workspace = selected_name
         self.save_appconfig()
         self.populate_workspaces()
+        self.load_workspace_notes()
         success_dialog = wx.MessageDialog(
             self,
             f"Switched to workspace '{selected_name}'.",
@@ -390,6 +397,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         if set_selected:
             self.selected_workspace = name
             self.save_appconfig()
+            self.load_workspace_notes()
         self.populate_workspaces()
 
     def snapshot_current_workspace(self):
@@ -468,6 +476,57 @@ class JanWorkspaceManagerFrame(wx.Frame):
                 data = json.load(handle)
         except (OSError, json.JSONDecodeError):
             return
+        data["modified_at"] = datetime.now().isoformat()
+        try:
+            with open(definition_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2)
+        except OSError:
+            return
+
+    def load_workspace_notes(self):
+        selected_name = getattr(self, "selected_workspace", "")
+        if not selected_name:
+            self.notes_field.ChangeValue("")
+            return
+        workspace_dir = self.get_workspace_dir_by_name(selected_name)
+        if not workspace_dir:
+            self.notes_field.ChangeValue("")
+            return
+        definition_path = os.path.join(workspace_dir, "ws_definition.json")
+        if not os.path.isfile(definition_path):
+            self.notes_field.ChangeValue("")
+            return
+        try:
+            with open(definition_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            self.notes_field.ChangeValue("")
+            return
+        notes = data.get("notes", "")
+        if notes is None:
+            notes = ""
+        self.notes_field.ChangeValue(notes)
+
+    def save_workspace_notes(self, notes):
+        selected_name = getattr(self, "selected_workspace", "")
+        if not selected_name:
+            return
+        workspace_dir = self.get_workspace_dir_by_name(selected_name)
+        if not workspace_dir:
+            return
+        definition_path = os.path.join(workspace_dir, "ws_definition.json")
+        if not os.path.isfile(definition_path):
+            return
+        try:
+            with open(definition_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return
+        trimmed = notes.strip()
+        if trimmed:
+            data["notes"] = notes
+        else:
+            data.pop("notes", None)
         data["modified_at"] = datetime.now().isoformat()
         try:
             with open(definition_path, "w", encoding="utf-8") as handle:
@@ -586,6 +645,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
             self.data_path_input.ChangeValue(self.data_path)
         if self.github_repo_path:
             self.github_repo_input.ChangeValue(self.github_repo_path)
+        self.load_workspace_notes()
 
     def save_appconfig(self):
         data = {
