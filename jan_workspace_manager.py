@@ -1,7 +1,8 @@
 import json
-import os
+import os, sys
 import shutil
 import uuid
+import subprocess
 from datetime import datetime
 from pathlib import Path
 import appdirs
@@ -11,7 +12,7 @@ import wx
 
 class JanWorkspaceManagerFrame(wx.Frame):
     def __init__(self):
-        super().__init__(None, title="Jan Workspace Manager", size=(900, 600))
+        super().__init__(None, title="Jan Workspace Manager", size=(900, 620))
 
         # Define config paths
         config_dir = Path(appdirs.user_config_dir(appname="jan-wsmanager"))
@@ -22,8 +23,10 @@ class JanWorkspaceManagerFrame(wx.Frame):
 
         self.data_path_input = wx.TextCtrl(panel)
         self.data_path_browse_button = wx.Button(panel, label="Browse")
+        self.data_path_open_button = wx.Button(panel, label="Open data path")
         self.data_path_input.Bind(wx.EVT_TEXT, self.on_data_path_changed)
         self.data_path_browse_button.Bind(wx.EVT_BUTTON, self.on_browse_data_path)
+        self.data_path_open_button.Bind(wx.EVT_BUTTON, self.on_open_data_path)
 
         header = wx.StaticText(panel, label="Jan Workspace Manager")
         header_font = header.GetFont()
@@ -41,7 +44,10 @@ class JanWorkspaceManagerFrame(wx.Frame):
         settings_grid.Add(wx.StaticText(panel, label="Data path"), 0)
         data_path_sizer = wx.BoxSizer(wx.VERTICAL)
         data_path_sizer.Add(self.data_path_input, 0, wx.EXPAND)
-        data_path_sizer.Add(self.data_path_browse_button, 0, wx.TOP, 6)
+        data_path_buttons = wx.BoxSizer(wx.HORIZONTAL)
+        data_path_buttons.Add(self.data_path_browse_button, 0, wx.RIGHT, 6)
+        data_path_buttons.Add(self.data_path_open_button, 0)
+        data_path_sizer.Add(data_path_buttons, 0, wx.TOP, 6)
         settings_grid.Add(data_path_sizer, 0, wx.EXPAND)
 
         settings_grid.Add(wx.StaticText(panel, label="GitHub repo URL"), 0)
@@ -50,6 +56,8 @@ class JanWorkspaceManagerFrame(wx.Frame):
         github_path_sizer = wx.BoxSizer(wx.VERTICAL)
         github_path_sizer.Add(self.github_repo_input, 0, wx.EXPAND)
         settings_grid.Add(github_path_sizer, 0, wx.EXPAND)
+
+        self.appconfig_open_button = wx.Button(panel, label="Open appconfig")
 
         settings_sizer.Add(settings_grid, 0, wx.EXPAND | wx.ALL, 12)
 
@@ -86,6 +94,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
 
         self.change_button.Bind(wx.EVT_BUTTON, self.on_change_workspace)
         self.create_button.Bind(wx.EVT_BUTTON, self.on_create_workspace)
+        self.appconfig_open_button.Bind(wx.EVT_BUTTON, self.on_open_appconfig)
         self.rename_button.Bind(wx.EVT_BUTTON, self.on_rename_workspace)
         self.snapshot_button.Bind(wx.EVT_BUTTON, self.on_snapshot_workspace)
         self.push_button.Bind(wx.EVT_BUTTON, self.on_push_workspaces)
@@ -98,6 +107,7 @@ class JanWorkspaceManagerFrame(wx.Frame):
         actions_sizer.Add(self.snapshot_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.push_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.pull_button, 0, wx.EXPAND | wx.ALL, 6)
+        actions_sizer.Add(self.appconfig_open_button, 0, wx.EXPAND | wx.ALL, 6)
         actions_sizer.Add(self.quit_button, 0, wx.EXPAND | wx.ALL, 6)
 
         left_column = wx.BoxSizer(wx.VERTICAL)
@@ -123,6 +133,18 @@ class JanWorkspaceManagerFrame(wx.Frame):
         self.load_appconfig()
         self.populate_workspaces()
 
+    def open_in_default_editor(self, file_path: Path):
+        try:
+            if sys.platform.startswith("darwin"):
+                subprocess.Popen(["open", "-t", str(file_path)])
+            elif os.name == "nt":
+                os.startfile(file_path)
+            else:
+                subprocess.Popen(["xdg-open", str(file_path)])
+            print(f"Opened {file_path} in the default text editor.")
+        except Exception as exc:
+            print(f"Failed to open {file_path}: {exc}")
+    
     def populate_workspaces(self):
         self.workspaces_list.DeleteAllItems()
         data_path = getattr(self, "data_path", "")
@@ -171,6 +193,20 @@ class JanWorkspaceManagerFrame(wx.Frame):
     def on_change_workspace(self, event):
         selected = self.get_selected_workspace()
         self.change_workspace(selected)
+
+    def on_open_data_path(self, event):
+        data_path = self.data_path_input.GetValue().strip()
+        if not data_path:
+            return
+        if not os.path.isdir(data_path):
+            return
+        wx.LaunchDefaultApplication(data_path)
+
+    def on_open_appconfig(self, event):
+        self.ensure_appconfig()
+        if not self.appconfig.exists():
+            return
+        self.open_in_default_editor((self.appconfig))
 
     def on_github_repo_changed(self, event):
         repo_path = self.github_repo_input.GetValue().strip()
